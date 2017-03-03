@@ -138,43 +138,25 @@ public class EddaELBJanitorCrawler implements JanitorCrawler {
             LOGGER.info(String.format("Getting all ELBs in region %s", region));
         }
 
-        url += ";_expand:(loadBalancerName,createdTime,DNSName,instances,tags:(key,value))";
-
-        JsonNode jsonNode = null;
-        try {
-            jsonNode = eddaClient.getJsonNodeFromUrl(url);
-        } catch (Exception e) {
-            LOGGER.error(String.format(
-                    "Failed to get Jason node from edda for ELBs in region %s.", region), e);
-        }
-
-        if (jsonNode == null || !jsonNode.isArray()) {
-            throw new RuntimeException(String.format("Failed to get valid document from %s, got: %s", url, jsonNode));
-        }
-
-
+        JsonNode jsonNode = createJsonNodeFromRegionandURL(region, url);
+        
         List<Resource> resources = Lists.newArrayList();
         for (Iterator<JsonNode> it = jsonNode.getElements(); it.hasNext();) {
             resources.add(parseJsonElementToELBResource(region, it.next()));
         }
 
         Map<String, List<String>> elBtoASGMap = buildELBtoASGMap(region);
-        for(Resource resource : resources) {
-            List<String> asgList = elBtoASGMap.get(resource.getId());
-            if (asgList != null && asgList.size() > 0) {
-                resource.setAdditionalField("referencedASGCount", "" + asgList.size());
-                String asgStr = StringUtils.join(asgList,",");
-                resource.setDescription(resource.getDescription() + ", ASGS=" + asgStr);
-                LOGGER.debug(String.format("Resource ELB %s is referenced by ASGs %s", resource.getId(), asgStr));
-            } else {
-                resource.setAdditionalField("referencedASGCount", "0");
-                resource.setDescription(resource.getDescription() + ", ASGS=none");
-                LOGGER.debug(String.format("No ASGs found for ELB %s", resource.getId()));
-            }
-        }
-
+        adjustResourcesWithElBtoASGMap(resources, elBtoASGMap);
+        
         Map<String, List<DNSEntry>> elBtoDNSMap = buildELBtoDNSMap(region);
-        for(Resource resource : resources) {
+        adjustResourcesWithElbtoDNSMap(resources, elBtoDNSMap);
+       
+        return resources;
+    }
+
+    private void adjustResourcesWithElbtoDNSMap(List<Resource> resources, 
+    		Map<String, List<DNSEntry>> elBtoDNSMap) {
+    	for(Resource resource : resources) {
             List<DNSEntry> dnsEntryList = elBtoDNSMap.get(resource.getAdditionalField("DNSName"));
             if (dnsEntryList != null && dnsEntryList.size() > 0) {
                 ArrayList<String> dnsNames = new ArrayList<>();
@@ -197,12 +179,45 @@ public class EddaELBJanitorCrawler implements JanitorCrawler {
                 resource.setDescription(resource.getDescription() + ", DNS=none");
                 LOGGER.debug(String.format("No DNS found for ELB %s", resource.getId()));
             }
+        }		
+	}
+
+	private void adjustResourcesWithElBtoASGMap(List<Resource> resources, 
+    		Map<String, List<String>> elBtoASGMap) {
+        for(Resource resource : resources) {
+            List<String> asgList = elBtoASGMap.get(resource.getId());
+            if (asgList != null && asgList.size() > 0) {
+                resource.setAdditionalField("referencedASGCount", "" + asgList.size());
+                String asgStr = StringUtils.join(asgList,",");
+                resource.setDescription(resource.getDescription() + ", ASGS=" + asgStr);
+                LOGGER.debug(String.format("Resource ELB %s is referenced by ASGs %s", resource.getId(), asgStr));
+            } else {
+                resource.setAdditionalField("referencedASGCount", "0");
+                resource.setDescription(resource.getDescription() + ", ASGS=none");
+                LOGGER.debug(String.format("No ASGs found for ELB %s", resource.getId()));
+            }
+        }		
+	}
+
+	private JsonNode createJsonNodeFromRegionandURL(String region, String url) {
+    	url += ";_expand:(loadBalancerName,createdTime,DNSName,instances,tags:(key,value))";
+
+        JsonNode jsonNode = null;
+        try {
+            jsonNode = eddaClient.getJsonNodeFromUrl(url);
+        } catch (Exception e) {
+            LOGGER.error(String.format(
+                    "Failed to get Jason node from edda for ELBs in region %s.", region), e);
         }
 
-        return resources;
-    }
+        if (jsonNode == null || !jsonNode.isArray()) {
+            throw new RuntimeException(String.format("Failed to get valid document from %s, got: %s", url, jsonNode));
+        }
 
-    private Map<String, List<String>> buildELBtoASGMap(String region) {
+		return jsonNode;
+	}
+
+	private Map<String, List<String>> buildELBtoASGMap(String region) {
         String url = eddaClient.getBaseUrl(region) + "/aws/autoScalingGroups;_expand:(autoScalingGroupName,loadBalancerNames)";
         LOGGER.info(String.format("Getting all ELBs associated with ASGs in region %s", region));
 
